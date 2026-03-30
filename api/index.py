@@ -6,7 +6,7 @@ from flask_cors import CORS
 app = Flask(__name__)
 CORS(app)
 
-PHHC_API_BASE = "https://livedb9010.digitalls.in/cis_filing/public"
+PHHC_API_BASE = "https://livedb9010.phhc.gov.in/cis_filing/public"
 
 HEADERS = {
     "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/145.0.0.0 Safari/537.36",
