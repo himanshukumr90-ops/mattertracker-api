@@ -41,6 +41,19 @@ def health():
     return jsonify({"status": "ok", "service": "MatterTracker Case Lookup API"})
 
 
+@app.route("/privacy", methods=["GET"])
+def privacy():
+    """Serve the MatterTracker privacy policy as a standalone page
+    (used for the App Store / Play Store listing and the in-app link)."""
+    try:
+        path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "privacy.html")
+        with open(path, "r", encoding="utf-8") as f:
+            html = f.read()
+    except Exception:
+        html = "<!DOCTYPE html><h1>Privacy Policy</h1><p>Temporarily unavailable.</p>"
+    return html, 200, {"Content-Type": "text/html; charset=utf-8"}
+
+
 @app.route("/case", methods=["GET"])
 def get_case():
     case_type = request.args.get("type", "").strip().upper()
