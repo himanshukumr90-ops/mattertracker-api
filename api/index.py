@@ -41,6 +41,45 @@ def health():
     return jsonify({"status": "ok", "service": "MatterTracker Case Lookup API"})
 
 
+# ---------------------------------------------------------------------------
+# PHHC relay for the Railway scraper.
+#
+# livedb9010.phhc.gov.in (the court's live API, since the June 2026 move off
+# digitalls.in) only accepts connections from Indian IPs. This function runs
+# in bom1 (Mumbai) — see vercel.json — so it can reach the API, while the
+# scraper on Railway (EU) cannot. The scraper points its LIVEDB/display-board
+# base at /phhc/... here. GET-only, path-allowlisted so this can't be used
+# as an open proxy; everything relayed is public court data.
+# ---------------------------------------------------------------------------
+PHHC_UPSTREAM = "https://livedb9010.phhc.gov.in"
+PHHC_ALLOWED_PATHS = {
+    "display_board/public/getRecords",
+    "cis_filing/public/getCauseListSummary",
+    "cis_filing/public/getCauseList",
+    "cis/judges/active-bench",
+}
+
+
+@app.route("/phhc/<path:subpath>", methods=["GET"])
+def phhc_relay(subpath):
+    if subpath not in PHHC_ALLOWED_PATHS:
+        return jsonify({"error": "path not allowed"}), 403
+    try:
+        r = requests.get(
+            f"{PHHC_UPSTREAM}/{subpath}",
+            params=request.args,
+            headers=HEADERS,
+            timeout=8,  # stay under the serverless duration cap
+        )
+    except requests.RequestException as e:
+        return jsonify({"error": f"upstream: {e}"}), 504
+    return (
+        r.content,
+        r.status_code,
+        {"Content-Type": r.headers.get("Content-Type", "application/json")},
+    )
+
+
 @app.route("/privacy", methods=["GET"])
 def privacy():
     """Serve the MatterTracker privacy policy as a standalone page
