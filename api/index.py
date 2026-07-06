@@ -93,6 +93,23 @@ def privacy():
     return html, 200, {"Content-Type": "text/html; charset=utf-8"}
 
 
+@app.route("/delete-account", methods=["GET"])
+def delete_account():
+    """Serve the account-deletion request page. Google Play's Data Safety
+    form requires a public URL where users of an app with account creation
+    can request account + data deletion; Apple reviewers look for the
+    same. Linked from the Play listing and the privacy policy."""
+    try:
+        path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "delete-account.html")
+        with open(path, "r", encoding="utf-8") as f:
+            html = f.read()
+    except Exception:
+        html = ("<!DOCTYPE html><h1>Delete Your Account</h1>"
+                "<p>Email <a href='mailto:mattertracker0@gmail.com'>mattertracker0@gmail.com</a> "
+                "from your registered address with the subject 'Delete my MatterTracker account'.</p>")
+    return html, 200, {"Content-Type": "text/html; charset=utf-8"}
+
+
 @app.route("/case", methods=["GET"])
 def get_case():
     case_type = request.args.get("type", "").strip().upper()
