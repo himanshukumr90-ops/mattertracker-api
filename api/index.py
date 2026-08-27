@@ -93,6 +93,21 @@ def privacy():
     return html, 200, {"Content-Type": "text/html; charset=utf-8"}
 
 
+@app.route("/terms", methods=["GET"])
+def terms():
+    """Serve the Terms of Use (linked from the in-app Profile page).
+    Carries the assistance-tool / no-liability-for-missed-cases and
+    unofficial-cause-list disclaimers."""
+    try:
+        path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "terms.html")
+        with open(path, "r", encoding="utf-8") as f:
+            html = f.read()
+    except Exception:
+        html = ("<!DOCTYPE html><h1>Terms of Use</h1><p>Temporarily unavailable. "
+                "Contact <a href='mailto:mattertracker0@gmail.com'>mattertracker0@gmail.com</a>.</p>")
+    return html, 200, {"Content-Type": "text/html; charset=utf-8"}
+
+
 @app.route("/delete-account", methods=["GET"])
 def delete_account():
     """Serve the account-deletion request page. Google Play's Data Safety
