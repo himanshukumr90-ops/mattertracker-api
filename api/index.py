@@ -108,6 +108,22 @@ def terms():
     return html, 200, {"Content-Type": "text/html; charset=utf-8"}
 
 
+@app.route("/support", methods=["GET"])
+def support():
+    """Serve the support page. Apple requires a working Support URL on every
+    App Store listing; this is that page (contact address, FAQ covering the
+    empty-board / not-yet-listed / no-notification questions, and the
+    in-app account-deletion route)."""
+    try:
+        path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "support.html")
+        with open(path, "r", encoding="utf-8") as f:
+            html = f.read()
+    except Exception:
+        html = ("<!DOCTYPE html><h1>Support</h1><p>Contact "
+                "<a href='mailto:mattertracker0@gmail.com'>mattertracker0@gmail.com</a>.</p>")
+    return html, 200, {"Content-Type": "text/html; charset=utf-8"}
+
+
 @app.route("/delete-account", methods=["GET"])
 def delete_account():
     """Serve the account-deletion request page. Google Play's Data Safety
