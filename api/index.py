@@ -1,4 +1,5 @@
 import os
+import re
 import requests
 from flask import Flask, request, jsonify
 from flask_cors import CORS
@@ -77,6 +78,113 @@ def phhc_relay(subpath):
         r.content,
         r.status_code,
         {"Content-Type": r.headers.get("Content-Type", "application/json")},
+    )
+
+
+# ---------------------------------------------------------------------------
+# OLD-SITE relay for the Complete List (added 2026-09-07).
+#
+# highcourtchd.gov.in serves the authoritative Complete List PDF. It became
+# India-only at some point before 2026-09-07: the Railway scraper (EU) now
+# gets a bare TCP connect timeout, while the same request from India connects
+# in 0.13s. Same geo-fence that moved the live API behind this relay in June.
+# It also 403s a blank User-Agent, hence the browser UA below.
+#
+# Two things forced the shape of this relay rather than a plain pass-through:
+#   * the PDF is ~5.1MB, over the ~4.5MB serverless response cap, so it is
+#     returned in slices and reassembled by the scraper;
+#   * the upstream advertises Accept-Ranges but IGNORES a Range header
+#     (measured: asking for bytes 0-1023 returned HTTP 200 and all 5,067,680
+#     bytes), so ranging upstream is not an option — we slice our own copy.
+# Fetching upstream takes ~1.7s, so re-fetching per chunk stays well inside
+# the function duration cap.
+# ---------------------------------------------------------------------------
+OLD_SITE_BASE = "https://highcourtchd.gov.in"
+OLD_SITE_CSRF = "706868632d7465616d"  # 'phhc-team' hex-encoded; the site accepts it
+OLD_SITE_HEADERS = {
+    "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+                  "AppleWebKit/537.36 (KHTML, like Gecko) "
+                  "Chrome/124.0.0.0 Safari/537.36",
+    "Referer": f"{OLD_SITE_BASE}/?mod=causelist",
+}
+OLD_SITE_CHUNK_BYTES = 3_000_000  # safely under the response cap
+
+
+@app.route("/phhc-old/causelist-name", methods=["GET"])
+def old_site_causelist_name():
+    """Step 1: ask the old site for the obfuscated filename of a date's
+    Complete List. Returns {"filename": ...} or {"filename": null} when no
+    Complete List is published for that date yet."""
+    date_str = request.args.get("date", "")
+    try:
+        y, m, d = date_str.split("-")
+        ddmmyyyy = f"{d}/{m}/{y}"
+    except ValueError:
+        return jsonify({"error": "date must be YYYY-MM-DD"}), 400
+    try:
+        r = requests.post(
+            f"{OLD_SITE_BASE}/view_causeList.php",
+            headers={**OLD_SITE_HEADERS, "X-Requested-With": "XMLHttpRequest"},
+            data={
+                "csrf_token": OLD_SITE_CSRF,
+                "t_f_date": ddmmyyyy,
+                "urg_ord": request.args.get("urg_ord", "B"),  # B = Complete List
+                "action": "show_causeList",
+            },
+            timeout=20,
+        )
+    except requests.RequestException as e:
+        return jsonify({"error": f"upstream: {e}"}), 504
+    if r.status_code != 200:
+        return jsonify({"error": f"upstream HTTP {r.status_code}"}), 502
+    m = re.search(r"filename=([A-Za-z0-9]+)", r.text)
+    return jsonify({"filename": m.group(1) if m else None})
+
+
+@app.route("/phhc-old/causelist-pdf", methods=["GET"])
+def old_site_causelist_pdf():
+    """Step 2: return one slice of the Complete List PDF.
+
+    ?filename=<obfuscated>&chunk=<0-based index>
+    Response headers carry X-Total-Size and X-Chunk-Count so the caller knows
+    how many slices to ask for; the body is the raw bytes of that slice.
+    """
+    filename = request.args.get("filename", "")
+    if not filename.isalnum():
+        return jsonify({"error": "bad filename"}), 400
+    try:
+        chunk = int(request.args.get("chunk", "0"))
+    except ValueError:
+        return jsonify({"error": "bad chunk"}), 400
+    if chunk < 0:
+        return jsonify({"error": "bad chunk"}), 400
+    try:
+        r = requests.get(
+            f"{OLD_SITE_BASE}/show_cause_list.php",
+            params={"filename": filename},
+            headers=OLD_SITE_HEADERS,
+            timeout=25,
+        )
+    except requests.RequestException as e:
+        return jsonify({"error": f"upstream: {e}"}), 504
+    if r.status_code != 200:
+        return jsonify({"error": f"upstream HTTP {r.status_code}"}), 502
+    if "application/pdf" not in r.headers.get("Content-Type", ""):
+        return jsonify({"error": "upstream did not return a PDF"}), 502
+    body = r.content
+    total = len(body)
+    count = max(1, (total + OLD_SITE_CHUNK_BYTES - 1) // OLD_SITE_CHUNK_BYTES)
+    if chunk >= count:
+        return jsonify({"error": f"chunk out of range (have {count})"}), 416
+    start = chunk * OLD_SITE_CHUNK_BYTES
+    return (
+        body[start:start + OLD_SITE_CHUNK_BYTES],
+        200,
+        {
+            "Content-Type": "application/pdf",
+            "X-Total-Size": str(total),
+            "X-Chunk-Count": str(count),
+        },
     )
 
 
