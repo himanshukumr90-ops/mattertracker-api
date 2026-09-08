@@ -55,6 +55,15 @@ def health():
 PHHC_UPSTREAM = "https://livedb9010.phhc.gov.in"
 PHHC_ALLOWED_PATHS = {
     "display_board/public/getRecords",
+    # Per-case board detail for ONE court: every case on that court's list
+    # with its own hearing_status (I = being heard now, Y = already taken up,
+    # N = not yet called) plus is_pass_over and the outcome text in
+    # curr_status. This is the court's own record of what has been called --
+    # ground truth, as against inferring it from the single current-item
+    # number in getRecords. Read by the app (browser), so it needs the CORS
+    # headers flask_cors adds globally; a direct browser call to the upstream
+    # is blocked, its CORS allows only https://new.phhc.gov.in.
+    "display_board/public/getDisplayDetails",
     "cis_filing/public/getCauseListSummary",
     "cis_filing/public/getCauseList",
     "cis/judges/active-bench",
