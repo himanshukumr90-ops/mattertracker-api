@@ -456,9 +456,18 @@ def public_court_status():
     if not isinstance(rows, list):
         return jsonify({"courts": []}), 200
 
-    # Pass the rows through unchanged so the app can swap this in for
-    # CourtStatus.list() without reshaping anything.
-    resp = jsonify({"courts": rows, "count": len(rows)})
+    # WHITELIST the fields. Base44 stamps every row with created_by, which
+    # for scraper-written rows is the OWNER'S EMAIL ADDRESS -- measured, not
+    # assumed: all 67 rows carried himanshukumr90@gmail.com. On an endpoint
+    # that is public and unauthenticated by design, passing rows through
+    # verbatim would publish the owner's email to anyone who asked. Send only
+    # the board fields the app actually renders.
+    allowed = ("id", "court_number", "court_date", "current_item", "is_active",
+               "is_passover", "passover_current", "passover_total",
+               "last_regular_item", "last_queue_item", "last_updated")
+    courts = [{k: row.get(k) for k in allowed if k in row}
+              for row in rows if isinstance(row, dict)]
+    resp = jsonify({"courts": courts, "count": len(courts)})
     # The board moves every 30s; a short cache keeps anonymous traffic off
     # Base44 without the figures ever looking stale.
     resp.headers["Cache-Control"] = "public, max-age=15"
