@@ -420,6 +420,51 @@ def get_orders():
         return jsonify({"orders": [], "count": 0, "error": str(e)})
 
 
+# ---------------------------------------------------------------------------
+# Public, session-free court data (added 2026-09-13).
+#
+# Base44 refuses entity reads without a session: an anonymous request gets
+# HTTP 403 {"reason":"auth_required"}. That is fine for a user's own cases,
+# but it also hides the LIVE DISPLAY BOARD, which is public court information
+# and the single most persuasive thing a prospective user can look at before
+# deciding to sign up. Serving it here - with the server key, which Base44
+# accepts - lets a logged-out visitor browse the board without us having to
+# migrate the whole app to custom auth (a change that alters sign-in for every
+# existing user, so it deserves its own carefully-tested release).
+#
+# Read-only and deliberately narrow: CourtStatus only. It carries no personal
+# data - court number, the item being heard, and passover state. TrackedCase
+# and NotificationLog are NOT exposed here and must never be.
+# ---------------------------------------------------------------------------
+@app.route("/public/court-status", methods=["GET"])
+def public_court_status():
+    """Every court's live board status, readable with no Base44 session."""
+    if not BASE44_APP_ID or not BASE44_API_KEY:
+        return jsonify({"courts": [], "error": "Base44 not configured"}), 200
+    try:
+        r = requests.get(
+            f"https://preview--matter-track-pro.base44.app/api/apps/{BASE44_APP_ID}/entities/CourtStatus",
+            headers={"api_key": BASE44_API_KEY, "Content-Type": "application/json"},
+            timeout=15,
+        )
+        if r.status_code != 200:
+            return jsonify({"courts": []}), 200
+        rows = r.json()
+    except (requests.RequestException, ValueError):
+        return jsonify({"courts": []}), 200
+
+    if not isinstance(rows, list):
+        return jsonify({"courts": []}), 200
+
+    # Pass the rows through unchanged so the app can swap this in for
+    # CourtStatus.list() without reshaping anything.
+    resp = jsonify({"courts": rows, "count": len(rows)})
+    # The board moves every 30s; a short cache keeps anonymous traffic off
+    # Base44 without the figures ever looking stale.
+    resp.headers["Cache-Control"] = "public, max-age=15"
+    return resp
+
+
 @app.route("/listings", methods=["GET"])
 def get_listings():
     """Fetch cause list entries for a case from Base44 CauseListEntry."""
