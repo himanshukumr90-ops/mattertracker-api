@@ -1,3 +1,4 @@
+import datetime
 import os
 import re
 import requests
@@ -472,6 +473,104 @@ def public_court_status():
     # Base44 without the figures ever looking stale.
     resp.headers["Cache-Control"] = "public, max-age=15"
     return resp
+
+
+# ---------------------------------------------------------------------------
+# /health -- the thing an outside monitor watches.
+#
+# WHY IT EXISTS: on 2026-09-28 PHHC's entire web estate began returning 403
+# ("Request forbidden by administrative rules") at 14:22 IST. The scraper was
+# perfectly healthy -- cycling every 30s, logging the failure, retrying -- but
+# blind, so no advocate got an alert. NOBODY NOTICED FOR SEVENTY MINUTES, and
+# only then because the owner happened to ask. The heartbeat existed; nothing
+# watched it.
+#
+# THE QUESTION THIS ANSWERS IS NOT "is the server up". It is "are advocates
+# being served right now". Those differ: every machine can be running while
+# the alerts have silently stopped, which is exactly what happened.
+#
+# It lives HERE, not on Railway, deliberately: if the scraper or the whole
+# Railway project dies, this endpoint still answers and still reports the
+# truth. Point a free uptime monitor at it; the monitor does the notifying,
+# so the alarm does not depend on the thing it is watching.
+#
+# 200 = fine. 503 = advocates are not being served AND courts are sitting.
+# Outside sitting hours it never returns 503: nothing is expected to move, and
+# an alarm that cries at 3am gets muted, and then it is worth nothing.
+# ---------------------------------------------------------------------------
+IST_OFFSET = datetime.timedelta(hours=5, minutes=30)
+SITTING_START_MIN = 9 * 60 + 45        # 09:45 IST
+SITTING_END_MIN = 16 * 60 + 30         # 16:30 IST
+STALE_SECONDS = 600                    # 10 min: generous, so a redeploy is not an alarm
+
+
+def _ist_now():
+    return datetime.datetime.now(datetime.timezone.utc) + IST_OFFSET
+
+
+def _courts_are_sitting(now_ist=None):
+    now_ist = now_ist or _ist_now()
+    if now_ist.weekday() >= 5:
+        return False
+    minutes = now_ist.hour * 60 + now_ist.minute
+    return SITTING_START_MIN <= minutes < SITTING_END_MIN
+
+
+@app.route("/health", methods=["GET"])
+def health_check():          # `health` is taken by the root route above
+    now_ist = _ist_now()
+    sitting = _courts_are_sitting(now_ist)
+    checks = {}
+
+    # 1. Is the scraper still writing? Age of the freshest court row.
+    age = None
+    try:
+        r = requests.get(
+            f"https://preview--matter-track-pro.base44.app/api/apps/{BASE44_APP_ID}/entities/CourtStatus",
+            headers={"api_key": BASE44_API_KEY, "Content-Type": "application/json"},
+            timeout=12,
+        )
+        rows = r.json() if r.status_code == 200 else []
+        stamps = [x.get("last_updated") for x in rows
+                  if isinstance(x, dict) and x.get("last_updated")]
+        if stamps:
+            newest = max(stamps).replace("Z", "+00:00")
+            age = int((datetime.datetime.now(datetime.timezone.utc)
+                       - datetime.datetime.fromisoformat(newest)).total_seconds())
+        checks["board_age_seconds"] = age
+        checks["scraper_writing"] = age is not None and age <= STALE_SECONDS
+    except Exception as e:
+        checks["scraper_writing"] = False
+        checks["scraper_error"] = f"{type(e).__name__}"
+
+    # 2. Can we still reach the court at all? This is what would have named
+    #    today's cause in the alert itself rather than leaving it a mystery.
+    try:
+        pr = requests.get(
+            f"{PHHC_UPSTREAM}/display_board/public/getRecords?skip=0&limit=1",
+            headers=HEADERS, timeout=10)
+        checks["phhc_reachable"] = pr.status_code == 200
+        checks["phhc_status"] = pr.status_code
+    except Exception as e:
+        checks["phhc_reachable"] = False
+        checks["phhc_status"] = f"{type(e).__name__}"
+
+    serving = bool(checks.get("scraper_writing")) and bool(checks.get("phhc_reachable"))
+    if not sitting:
+        verdict, code = "idle (courts not sitting)", 200
+    elif serving:
+        verdict, code = "ok", 200
+    elif not checks.get("phhc_reachable"):
+        verdict, code = "ALERTS STOPPED — the court's own systems are unreachable", 503
+    else:
+        verdict, code = "ALERTS STOPPED — the scraper is not updating the board", 503
+
+    return jsonify({
+        "status": verdict,
+        "courts_sitting": sitting,
+        "ist": now_ist.strftime("%Y-%m-%d %H:%M:%S"),
+        "checks": checks,
+    }), code
 
 
 @app.route("/listings", methods=["GET"])
